@@ -2,6 +2,8 @@
 <?php
 define("ROOT_PATH", "/www/szabto.com/public/szori/");
 
+$tid = rand(0,9999);
+
 require_once ROOT_PATH."config.php";
 
 mylog("Caught incoming mail");
@@ -14,7 +16,13 @@ while (!feof($fd)) {
 }
 fclose($fd);
 
-$email = substr($email, strpos($email, "Content-Description: ujetlap"));
+$sp = strpos($email, "Content-Description: ujetlap");
+if( $sp < 0 || $sp === false ) {
+	mylog("BAD MAIL, IGNORING");
+	echo "DO NOT USE THIS EMAIL PLEASE";
+	return;
+}
+$email = substr($email, $sp);
 $email = substr($email, strpos($email, "base64") + 6);
 $email = substr($email, 0, strpos($email, "--"));
 
@@ -28,7 +36,7 @@ mysql_connect($config["host"], $config["name"], $config["password"]);
 mysql_select_db($config["database"]);
 mysql_query("SET NAMES utf8");
 
-require(ROOT_PATH."php-excel-reader/excel_reader2.php");
+require(ROOT_PATH.'php-excel-reader/excel_reader2.php');
 mylog("Loaded excel parser lib, opening xls");
 
 $sheet = new Spreadsheet_Excel_Reader(ROOT_PATH."tst.xls");
@@ -127,10 +135,27 @@ foreach( $foods as $category => $items ) {
 	$category_id = $cat["id"];
 
 	foreach( $items as $item ) {
-		mysql_query(sprintf("INSERT INTO items (menu_id, category_id, name, price_high, price_low) VALUES(%d, %d, '%s', %d, %d)",
+		$name = addslashes(trim($item["name"]));
+		$foodQuery = mysql_query(sprintf("SELECT id FROM foods WHERE name LIKE '%s'",
+			$name
+		));
+		$foodId = 0;
+		if( mysql_num_rows($foodQuery) ) {
+			$fr = mysql_fetch_assoc($foodQuery);
+			$foodId = $fr["id"];
+		}
+		else {
+			mysql_query(sprintf("INSERT INTO foods (name) VALUES('%s')",
+				$name
+			));
+
+			$foodId = mysql_insert_id();
+		}
+
+		mysql_query(sprintf("INSERT INTO items (menu_id, category_id, food_id, price_high, price_low) VALUES(%d, %d, '%s', %d, %d)",
 			$menu_id,
 			$category_id,
-			$item["name"],
+			$foodId,
 			$item["price"][0],
 			count($item["price"]) > 1 ? $item["price"][1] : null
 		));
@@ -171,7 +196,8 @@ mylog("Done");
 mysql_close();
 
 function mylog($msg) {
-	$msg = date("Y-m-d H:i:s")." " .$msg."\n";
+	global $tid;
+	$msg = date("Y-m-d H:i:s")."[{$tid}] " .$msg."\n";
 	file_put_contents(ROOT_PATH."log.txt", $msg, FILE_APPEND | LOCK_EX);
 }
 ?>

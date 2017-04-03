@@ -8,7 +8,8 @@ mysql_query("SET NAMES utf8");
 header("Content-type: application/json");	
 
 $action = isset($_GET["action"]) ? $_GET["action"] : "list";
-$days = explode(" ", "vasárnap hétfő kedd szerda csütörtök péntek szombat");
+//$days = explode(" ", "vasárnap hétfő kedd szerda csütörtök péntek szombat");
+$daysShort = explode(" ", "V H K SZE CS P SZO");
 
 $resp = array();
 
@@ -18,6 +19,18 @@ switch( $action ) {
 	case "getday":
 		if( isset($_GET["id"]) ) {
 			$resp = getDay($_GET["id"]);
+		}
+		else {
+			$resp = array(
+				"success" => false,
+				"error" => "Nem adtál meg ID-t!"
+			);
+		}
+	break;
+
+	case "getfood":
+		if( isset($_GET["id"]) ) {
+			$resp = getFood($_GET["id"]);
 		}
 		else {
 			$resp = array(
@@ -40,6 +53,48 @@ mysql_close();
 # Helpers
 #####################################
 
+function getFood( $id ) {
+	$food = mysql_query(sprintf("SELECT *, COUNT(i.id) served_count, MIN(i.price_low) price_low_min, MAX(i.price_low) price_low_max, AVG(i.price_low) price_low_avg, MIN(i.price_high) price_high_min, MAX(i.price_high) price_high_max, AVG(i.price_high) price_high_avg FROM foods f JOIN items i ON i.food_id=f.id GROUP BY f.id",
+		$id
+	));
+	if( mysql_num_rows($food) ) {
+		$row = mysql_fetch_assoc($food);
+		$retArr = array(
+			"success" => true,
+			"details" => array(
+				"name" => $row["name"],
+				"served_count" => intval($row["served_count"]),
+				"image_url" => strlen($row["image_url"]) < 1 ? null : $row["image_url"],
+				"description" => strlen($row["description"]) < 1 ? null : $row["description"],
+				"prices" => array()
+			)
+		);
+
+
+		if( 0 < $val = intval($row["price_low_min"]) )
+			$retArr["details"]["prices"]["low_min"] = $val;
+		if( 0 < $val = intval($row["price_low_max"]) )
+			$retArr["details"]["prices"]["low_max"] = $val;
+		if( 0 < $val = intval($row["price_low_avg"]) )
+			$retArr["details"]["prices"]["low_avg"] = $val;
+		if( 0 < $val = intval($row["price_high_min"]) )
+			$retArr["details"]["prices"]["high_min"] = $val;
+		if( 0 < $val = intval($row["price_high_max"]) )
+			$retArr["details"]["prices"]["high_max"] = $val;
+		if( 0 < $val = intval($row["price_high_avg"]) )
+			$retArr["details"]["prices"]["high_avg"] = $val;
+
+		return $retArr;
+	}
+	else {
+		return array(
+			"success" => false,
+			"error" => "Erre a napra nem található menü."
+		);
+	}
+	return $resp;
+}
+
 function getDay( $id ) {
 	$menuQ = mysql_query(sprintf("SELECT id, valid FROM menu WHERE id=%d",
 		$id
@@ -60,7 +115,7 @@ function getDay( $id ) {
 			);
 		}
 
-		$items = mysql_query(sprintf("SELECT * FROM items WHERE menu_id=%d",
+		$items = mysql_query(sprintf("SELECT i.*, f.name, f.image_url, f.description FROM items i JOIN foods f ON f.id=i.food_id WHERE menu_id=%d",
 			$id
 		));
 		while($row = mysql_fetch_assoc($items)) {
@@ -96,7 +151,7 @@ function getDay( $id ) {
 
 function getList( $start ) {
 	global $limit;
-	global $days;
+	global $daysShort;
 	if( !$start ) $start = 0;
 	$r = array(
 		"success" => true,
@@ -109,13 +164,14 @@ function getList( $start ) {
 	while($row = mysql_fetch_assoc($list)) {
 		$t = strtotime($row["valid"]);
 		$wd = date("w", $t);
-		$day = $days[$wd];
+		$day = $daysShort[$wd];
 		$weekNum = date("W", $t);
 
 		$r["list"][] = array(
+		    "day_name" => $day,
 			"id" => intval($row["id"]),
 			"week_num" => intval($weekNum),
-			"date" => $row["valid"]." ({$day})",
+			"date" => $row["valid"],
 			"posted" => $row["created_at"],
 			"item_count" => intval($row["item_count"])
 		);
