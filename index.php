@@ -54,7 +54,8 @@ mysql_close();
 #####################################
 
 function getFood( $id ) {
-	$food = mysql_query(sprintf("SELECT *, COUNT(i.id) served_count, MIN(i.price_low) price_low_min, MAX(i.price_low) price_low_max, AVG(i.price_low) price_low_avg, MIN(i.price_high) price_high_min, MAX(i.price_high) price_high_max, AVG(i.price_high) price_high_avg FROM foods f JOIN items i ON i.food_id=f.id GROUP BY f.id",
+	$id = intval($id);
+	$food = mysql_query(sprintf("SELECT *, COUNT(i.id) served_count, MIN(i.price_low) price_low_min, MAX(i.price_low) price_low_max, AVG(i.price_low) price_low_avg, MIN(i.price_high) price_high_min, MAX(i.price_high) price_high_max, AVG(i.price_high) price_high_avg FROM foods f JOIN items i ON i.food_id=f.id WHERE f.id=%d GROUP BY f.id",
 		$id
 	));
 	if( mysql_num_rows($food) ) {
