@@ -66,7 +66,7 @@ function getFood( $id ) {
 				"name" => $row["name"],
 				"served_count" => intval($row["served_count"]),
 				"image_url" => strlen($row["image_url"]) < 1 ? null : $row["image_url"],
-				"description" => strlen($row["description"]) < 1 ? null : $row["description"],
+				"description" => strlen($row["description"]) < 1 ? null : explode("\r\n", $row["description"]),
 				"prices" => array()
 			)
 		);
@@ -129,6 +129,7 @@ function getDay( $id ) {
 			
 			if( $cc != null ) {
 				$cc["items"][] = array(
+					"id" => intval($row["food_id"]),
 					"name" => $row["name"],
 					"price_high" => intval($row["price_high"]),
 					"price_low" => intval($row["price_low"])
