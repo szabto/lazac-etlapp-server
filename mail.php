@@ -57,6 +57,7 @@ mylog("Done");
 mysql_close();
 
 function sendNotification( $xlsData ) {
+	global $config;
 	$data = array(
 		"to" => "/topics/newmenu",
 		"data" => array(
