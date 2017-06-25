@@ -8,6 +8,8 @@ require_once ROOT_PATH.'php-excel-reader/excel_reader2.php';
 
 $threadId = rand(0,9999);
 
+$sheetNum = 1;
+
 mylog("Caught incoming mail");
 $fd = fopen("php://stdin", "r");
 $email = "";
@@ -87,11 +89,54 @@ function sendNotification( $xlsData ) {
 	curl_close($ch);
 }
 
+function sendFavoriteNotification( $endpoint, $date ) {
+	global $config;
+	$data = array(
+		"to" => $endpoint,
+		"notification"=> array(
+			"title" => "Lazac - Kedvenc értesitő",
+			"text" => $date == date("Y-m-d") ? "Ma az egyik kedvenced van az étteremben." : "Az egyik kedvenced lesz ekkor: " .$date,
+	    	"sound" => "default"
+		),
+		"priority" => 10
+	);
+	$dataString = json_encode($data, JSON_UNESCAPED_SLASHES);
+	$ch = curl_init('https://fcm.googleapis.com/fcm/send');
+
+	curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+		"Content-Type:  application/json",
+		"Authorization: key=".$config["google_key"],
+		"Content-length: ".strlen($dataString)
+	));                                                                    
+	curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	curl_setopt($ch, CURLOPT_POSTFIELDS, $dataString);
+
+	$response = curl_exec($ch);
+
+	curl_close($ch);
+}
+
+function getTokensForFood( $foodId ) {
+	$tokens = array();
+	$favoriteQuery = mysql_query(sprintf("SELECT DISTINCT uid.firebase_id FROM favorites f JOIN firebase_uids uid ON uid.guid=f.user_token WHERE f.food_id=%d",
+		$foodId
+	));
+	if( mysql_num_rows($favoriteQuery) ) {
+		while( $row = mysql_fetch_assoc($favoriteQuery) ) {
+			$tokens[] = $row["firebase_id"];
+		}
+	}
+
+	return $tokens;
+}
+
 function parseXls( $file = "tst.xls" ) {
-	$sheet = new Spreadsheet_Excel_Reader(ROOT_PATH."tst.xls");
+	global $sheetNum;
+	$sheet = new Spreadsheet_Excel_Reader(ROOT_PATH.$file);
 	mylog("xls open, starting action");
 
-	$date = $sheet->val(9,2);
+	$date = $sheet->val(9,2,$sheetNum);
 
 	$foods = array();
 
@@ -105,9 +150,9 @@ function parseXls( $file = "tst.xls" ) {
 	for( $i=0;$i<2;$i++ ) {
 		for( $x=10;$x<60;$x++ ) {
 
-			$name = trim($sheet->val($x, $i*4+2));
-			$price_low = intval(str_replace(array(",", '$'), '', trim($sheet->val($x, $i*4+4))));
-			$price_high = intval(str_replace(array(",", '$'), '', trim($sheet->val($x, $i*4+3))));
+			$name = trim($sheet->val($x, $i*4+2,$sheetNum));
+			$price_low = intval(str_replace(array(",", '$'), '', trim($sheet->val($x, $i*4+4,$sheetNum))));
+			$price_high = intval(str_replace(array(",", '$'), '', trim($sheet->val($x, $i*4+3,$sheetNum))));
 
 			if( $name ) {
 				$isHead = false;
@@ -178,6 +223,8 @@ function parseXls( $file = "tst.xls" ) {
 
 	mysql_query("DELETE FROM items WHERE menu_id={$menu_id}");
 
+	$favoritedTokens = array();
+
 	foreach( $foods as $category => $items ) {
 		$q = mysql_query("SELECT id FROM categories WHERE name='{$category}'");
 		$cat = mysql_fetch_assoc($q);
@@ -192,6 +239,15 @@ function parseXls( $file = "tst.xls" ) {
 			if( mysql_num_rows($foodQuery) ) {
 				$fr = mysql_fetch_assoc($foodQuery);
 				$foodId = $fr["id"];
+
+				$tlist = getTokensForFood( $foodId );
+				if( count($tlist) ) {
+					foreach( $tlist as $token ) {
+						if( !in_array($token, $favoritedTokens) ) {
+							$favoritedTokens[] = $token;
+						}
+					}
+				}
 			}
 			else {
 				mysql_query(sprintf("INSERT INTO foods (name) VALUES('%s')",
@@ -209,6 +265,10 @@ function parseXls( $file = "tst.xls" ) {
 				count($item["price"]) > 1 ? $item["price"][1] : null
 			));
 		}
+	}
+
+	foreach( $favoritedTokens as $token ) {
+		sendFavoriteNotification($date, $token);
 	}
 
 	return array(

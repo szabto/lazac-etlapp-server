@@ -5,15 +5,16 @@ mysql_connect($config["host"], $config["name"], $config["password"]);
 mysql_select_db($config["database"]);
 mysql_query("SET NAMES utf8");
 
-header("Content-type: application/json");	
+header("Content-type: application/json");
 
 $action = isset($_GET["action"]) ? $_GET["action"] : "list";
-//$days = explode(" ", "vasárnap hétfő kedd szerda csütörtök péntek szombat");
+$days = explode(" ", "vasárnap hétfő kedd szerda csütörtök péntek szombat");
 $daysShort = explode(" ", "V H K SZE CS P SZO");
+$months = explode(" ", "január február március április május június július augusztus szeptember október november december");
 
 $resp = array();
 
-$limit = 11;
+$limit = 10;
 
 switch( $action ) {
 	case "getday":
@@ -26,6 +27,63 @@ switch( $action ) {
 				"error" => "Nem adtál meg ID-t!"
 			);
 		}
+	break;
+
+	case "setfavoritestate":
+		if( isset($_GET["id"]) && isset($_GET["uid"]) && isset($_GET["state"]) ) {
+			$id = $_GET["id"];
+			$uid = $_GET["uid"];
+			$state = $_GET["state"];
+
+			$resp = setFavoriteState($uid, $id, $state);
+		}
+		else {
+			$resp = array(
+				"success" => false,
+				"error" => "Hiányos adatok!"
+			);
+		}
+	break;
+
+	case "getfavoritedfoods":
+		if( isset($_GET["uid"]) ) {
+			$uid = $_GET["uid"];
+
+			$resp = getFavoritedFoods($uid);
+		}
+		else {
+			$resp = array(
+				"success" => false,
+				"error" => "Nem adtál meg USER ID-t!"
+			);
+		}
+	break;
+
+	case "gettoday":
+		$date = date("Y-m-d");
+		$resp = getDay($date, false);
+	break;
+
+	case "registeruuid":
+		if( isset($_GET["uuid"]) && isset($_GET["firebase_id"]) ) {
+			$uuid = $_GET["uuid"];
+			$token = $_GET["firebase_id"];
+
+
+
+			$resp = registerUUID( $uuid, $token );
+		}
+		else {
+			$resp = array(
+				"success" => false,
+				"error" => "Hiányos adatok!"
+			);
+		}
+	break;
+
+	case "getbroadcast":
+		$date = date("Y-m-d");
+		$resp = getBroadcast($date);
 	break;
 
 	case "getfood":
@@ -53,21 +111,161 @@ mysql_close();
 # Helpers
 #####################################
 
+function registerUUID( $id, $token ) {
+	$id = addslashes($id);
+	$token = addslashes($token);
+
+	$cq = mysql_query(sprintf("SELECT * FROM firebase_uids WHERE guid='%s' AND firebase_id='%s'",
+		$id,
+		$token
+	));
+	if( mysql_num_rows($cq) ) {
+		return array(
+			"success" => false,
+			"message" => "Already registered."
+		);
+	}
+	else {
+		mysql_query(sprintf("INSERT INTO firebase_uids (guid, firebase_id) VALUES('%s', '%s')",
+			$id,
+			$token
+		));
+		return array(
+			"success" => true
+		);
+	}
+}
+
+function getFavoritedFoods( $uid ) {
+	$uid = addslashes($uid);
+
+	$fq = mysql_query(sprintf("SELECT fav.food_id, food.name food_name FROM favorites fav JOIN foods food ON food.id=fav.food_id WHERE fav.user_token='%s'",
+		$uid
+	));
+
+	if( mysql_num_rows($fq) ) {
+		$result = array();
+		while( $row = mysql_fetch_assoc($fq) ) {
+			$result[] = array(
+				"id" => intval($row["food_id"]),
+				"name" => $row["food_name"]
+			);
+		}
+
+		return $result;
+	}
+	else {
+		return array();
+	}
+}
+
+function setFavoriteState( $uid, $foodId, $state ) {
+	sleep(.5);
+	$id = intval($foodId);
+	$uid = addslashes($uid);
+	$state = $state == "true";
+
+	$cq = mysql_query(sprintf("SELECT * FROM favorites WHERE food_id=%d AND user_token='%s'",
+		$id,
+		$uid
+	));
+
+	$exists = mysql_num_rows($cq) > 0;
+
+	if( $state == "1" && $exists ) {
+		return array(
+			"success" => false,
+			"message" => "Ez az étel már a kedvenceid között van."
+		);
+	}
+	if( $state == "0" && !$exists ) {
+		return array(
+			"success" => false,
+			"message" => "Nem található ez az étel a kedvenceid között."
+		);
+	}
+
+	if( $state == "1" ) { // insert
+		mysql_query(sprintf("INSERT INTO favorites (food_id, user_token) VALUES(%d, '%s')",
+			$id,
+			$uid
+		));
+
+		return array(
+			"success" => true
+		);
+	}
+	else if( $state == "0" ) {
+		mysql_query(sprintf("DELETE FROM favorites WHERE food_id=%d AND user_token='%s'",
+			$id,
+			$uid
+		));
+
+		return array(
+			"success" => true
+		);
+	}
+
+	return array(
+		"success" => false,
+		"message" => "Ismeretlen hiba."
+	);
+}
+
 function getFood( $id ) {
+	global $months;
+	global $days;
+
 	$id = intval($id);
-	$food = mysql_query(sprintf("SELECT *, COUNT(i.id) served_count, MIN(i.price_low) price_low_min, MAX(i.price_low) price_low_max, AVG(i.price_low) price_low_avg, MIN(i.price_high) price_high_min, MAX(i.price_high) price_high_max, AVG(i.price_high) price_high_avg FROM foods f JOIN items i ON i.food_id=f.id WHERE f.id=%d GROUP BY f.id",
+	$food = mysql_query(sprintf("SELECT f.*, COUNT(i.id) served_count, MIN(i.price_low) price_low_min, MAX(i.price_low) price_low_max, AVG(i.price_low) price_low_avg, MIN(i.price_high) price_high_min, MAX(i.price_high) price_high_max, AVG(i.price_high) price_high_avg FROM foods f JOIN items i ON i.food_id=f.id WHERE f.id=%d GROUP BY f.id",
 		$id
 	));
 	if( mysql_num_rows($food) ) {
 		$row = mysql_fetch_assoc($food);
+
+		$occurred = array();
+
+		$statQuery = mysql_query(sprintf("SELECT * FROM items i JOIN menu m ON i.menu_id=m.id WHERE i.food_id=%d ORDER BY m.valid ASC",
+			$row["id"]
+		));
+		
+		$occurrence = 0;
+		$occurrenceHelper = 0;
+		$occurrenceCount = 0;
+		if( mysql_num_rows($statQuery) ) {
+			while($r = mysql_fetch_assoc($statQuery) ) {
+				$ct = strtotime($r["valid"] . " 05:05:05");
+				if( $occurrenceHelper > 0 ) {
+					$dayDiff = round(($ct - $occurrenceHelper) / 60 / 60 / 24);
+					$occurrence += $dayDiff;
+					$occurrenceCount ++;
+				}
+				$occurrenceHelper = $ct;
+
+				$day = date("w", $ct);
+				$month = intval(date("m", $ct)) - 1;
+
+				$dn = $days[$day];
+				$mn = $months[$month];
+
+				$occurred[] = date("Y", $ct) . ". " . $mn . " " . date("d", $ct).", " . $dn;
+			}
+		}
+		$occurrence += round((time() - $occurrenceHelper) / 60 / 60 / 24);
+		$occurrence /= ($occurrenceCount+1);
+
 		$retArr = array(
 			"success" => true,
 			"details" => array(
 				"name" => $row["name"],
-				"served_count" => intval($row["served_count"]),
 				"image_url" => strlen($row["image_url"]) < 1 ? null : $row["image_url"],
 				"description" => strlen($row["description"]) < 1 ? null : explode("\r\n", $row["description"]),
 				"prices" => array()
+			),
+			"statistic" => array(
+				"occurrenceDates" => $occurred,
+				"served_count" => intval($row["served_count"]),
+				"occurrence" => round($occurrence)
 			)
 		);
 
@@ -96,12 +294,41 @@ function getFood( $id ) {
 	return $resp;
 }
 
-function getDay( $id ) {
-	$menuQ = mysql_query(sprintf("SELECT id, valid FROM menu WHERE id=%d",
-		$id
+function getBroadcast( $date ) {
+	$resp = array(
+		"success" => true,
+		"broadcastMessage" => null,
+		"hasBroadcast" => false
+	);
+	$bq = mysql_query(sprintf("SELECT message FROM broadcasts WHERE '%s' BETWEEN valid_from and valid_to",
+		$date
 	));
+	if( mysql_num_rows($bq) ) {
+		$row = mysql_fetch_assoc($bq);
+		$resp["broadcastMessage"] = $row["message"];
+		$resp["hasBroadcast"] = true;
+	}
+	return $resp;
+}
+
+function getDay( $value, $isId = true ) {
+	$menuQ = null;
+	if( $isId ) {
+		$value = intval($value);
+		$menuQ = mysql_query(sprintf("SELECT id, valid FROM menu WHERE id=%d",
+			$value
+		));
+	}
+	else {
+		$value = addslashes($value);
+		$menuQ = mysql_query(sprintf("SELECT id, valid FROM menu WHERE valid='%s'",
+			$value
+		));
+	}
+	
 	if( mysql_num_rows($menuQ) ) {
 		$menu = mysql_fetch_assoc($menuQ);
+		$id = $menu["id"];
 		$resp = array(
 			"success" => true,
 			"date" => $menu["valid"],
@@ -112,6 +339,7 @@ function getDay( $id ) {
 			$resp["data"][] = array(
 				"id" => $row["id"],
 				"name" => str_replace("  ", " ", $row["name"]),
+				"can_favorited" => $row["can_favorited"] == "1",
 				"items" => array()
 			);
 		}
@@ -132,7 +360,8 @@ function getDay( $id ) {
 					"id" => intval($row["food_id"]),
 					"name" => $row["name"],
 					"price_high" => intval($row["price_high"]),
-					"price_low" => intval($row["price_low"])
+					"price_low" => intval($row["price_low"]),
+					"can_favorited" => $cc["can_favorited"]
 				);
 			}
 			unset($cc);
